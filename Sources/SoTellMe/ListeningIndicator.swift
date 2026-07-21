@@ -1,29 +1,31 @@
 import AppKit
 
-/// A small, unobtrusive floating HUD shown while SoTellMe is listening or
-/// transcribing, so the user always knows the mic state at a glance.
+/// A small, unobtrusive floating HUD anchored to the bottom of the screen,
+/// shown while SoTellMe is listening or transcribing: a status row, a live
+/// (partial) transcript preview, and a voice-reactive waveform.
 final class ListeningIndicator {
     private var panel: NSPanel?
     private var dotView: NSView?
-    private var label: NSTextField?
-    private var levelBarBackground: NSView?
-    private var levelBarFill: NSView?
+    private var statusLabel: NSTextField?
+    private var transcriptLabel: NSTextField?
+    private var waveform: WaveformView?
 
     func show(state: String) {
         if panel == nil {
             buildPanel()
         }
         updateState(state)
-        updateLevel(0)
+        updateTranscript("")
+        waveform?.reset()
         panel?.orderFrontRegardless()
     }
 
     private func buildPanel() {
-        let width: CGFloat = 170
-        let height: CGFloat = 54
+        let width: CGFloat = 380
+        let height: CGFloat = 128
         guard let screen = NSScreen.main else { return }
         let x = screen.frame.midX - width / 2
-        let y = screen.frame.maxY - 100
+        let y = screen.visibleFrame.minY + 36
         let rect = NSRect(x: x, y: y, width: width, height: height)
 
         let p = NSPanel(contentRect: rect, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
@@ -40,42 +42,47 @@ final class ListeningIndicator {
         visualEffect.blendingMode = .behindWindow
         visualEffect.state = .active
         visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = height / 2
+        visualEffect.layer?.cornerRadius = 22
         visualEffect.layer?.masksToBounds = true
+        visualEffect.layer?.borderWidth = 1
+        visualEffect.layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
 
-        let dot = NSView(frame: NSRect(x: 14, y: height - 22, width: 12, height: 12))
+        let dot = NSView(frame: NSRect(x: 20, y: height - 28, width: 10, height: 10))
         dot.wantsLayer = true
         dot.layer?.backgroundColor = NSColor.systemRed.cgColor
-        dot.layer?.cornerRadius = 6
+        dot.layer?.cornerRadius = 5
 
-        let text = NSTextField(labelWithString: "")
-        text.frame = NSRect(x: 36, y: height - 26, width: width - 46, height: 18)
-        text.textColor = .labelColor
-        text.font = .systemFont(ofSize: 12, weight: .medium)
+        let status = NSTextField(labelWithString: "")
+        status.frame = NSRect(x: 38, y: height - 31, width: width - 58, height: 16)
+        status.textColor = .secondaryLabelColor
+        status.font = .systemFont(ofSize: 11, weight: .semibold)
 
-        let barBackground = NSView(frame: NSRect(x: 36, y: 10, width: width - 46, height: 6))
-        barBackground.wantsLayer = true
-        barBackground.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.15).cgColor
-        barBackground.layer?.cornerRadius = 3
+        let transcript = NSTextField(labelWithString: "")
+        transcript.frame = NSRect(x: 20, y: 46, width: width - 40, height: 38)
+        transcript.textColor = .labelColor
+        transcript.font = .systemFont(ofSize: 14, weight: .medium)
+        transcript.cell?.wraps = true
+        transcript.cell?.isScrollable = false
+        transcript.cell?.truncatesLastVisibleLine = true
+        transcript.maximumNumberOfLines = 2
+        transcript.lineBreakMode = .byTruncatingHead
+        transcript.alignment = .center
 
-        let barFill = NSView(frame: NSRect(x: 0, y: 0, width: 0, height: 6))
-        barFill.wantsLayer = true
-        barFill.layer?.backgroundColor = NSColor.systemGreen.cgColor
-        barFill.layer?.cornerRadius = 3
-        barBackground.addSubview(barFill)
+        let wave = WaveformView(frame: NSRect(x: 20, y: 14, width: width - 40, height: 26))
 
         visualEffect.addSubview(dot)
-        visualEffect.addSubview(text)
-        visualEffect.addSubview(barBackground)
+        visualEffect.addSubview(status)
+        visualEffect.addSubview(transcript)
+        visualEffect.addSubview(wave)
         p.contentView = visualEffect
 
         animatePulse(on: dot)
 
         panel = p
         dotView = dot
-        label = text
-        levelBarBackground = barBackground
-        levelBarFill = barFill
+        statusLabel = status
+        transcriptLabel = transcript
+        waveform = wave
     }
 
     private func animatePulse(on dot: NSView) {
@@ -89,25 +96,97 @@ final class ListeningIndicator {
     }
 
     func updateState(_ text: String) {
-        label?.stringValue = text
+        statusLabel?.stringValue = text
     }
 
-    /// Reflects the current microphone input level (0...1 peak amplitude)
-    /// as a filled bar, with color shifting from green to red near clipping.
+    /// Shows the current (possibly partial) transcript live, replacing older
+    /// text with the most recent words when it doesn't fit.
+    func updateTranscript(_ text: String) {
+        transcriptLabel?.stringValue = text
+    }
+
+    /// Feeds the current microphone peak amplitude (0...1) into the
+    /// voice-reactive waveform.
     func updateLevel(_ level: Float) {
-        guard let background = levelBarBackground, let fill = levelBarFill else { return }
-        let clamped = max(0, min(1, level * 4))
-        fill.frame.size.width = background.bounds.width * CGFloat(clamped)
-        let color: NSColor = clamped > 0.85 ? .systemRed : (clamped > 0.5 ? .systemYellow : .systemGreen)
-        fill.layer?.backgroundColor = color.cgColor
+        waveform?.pushLevel(level)
     }
 
     func hide() {
         panel?.orderOut(nil)
         panel = nil
         dotView = nil
-        label = nil
-        levelBarBackground = nil
-        levelBarFill = nil
+        statusLabel = nil
+        transcriptLabel = nil
+        waveform = nil
+    }
+}
+
+/// A row of thin bars that animate in real time to reflect microphone
+/// amplitude, like a compact voice waveform.
+private final class WaveformView: NSView {
+    private let barCount = 28
+    private var levels: [CGFloat]
+    private var barLayers: [CALayer] = []
+
+    override init(frame: NSRect) {
+        levels = Array(repeating: 0.04, count: barCount)
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        rebuildBars()
+    }
+
+    func reset() {
+        levels = Array(repeating: 0.04, count: barCount)
+        render(animated: false)
+    }
+
+    func pushLevel(_ level: Float) {
+        levels.removeFirst()
+        let normalized = max(0.04, min(1, CGFloat(level) * 5))
+        levels.append(normalized)
+        render(animated: true)
+    }
+
+    private func rebuildBars() {
+        guard let rootLayer = layer, bounds.width > 0 else { return }
+        rootLayer.sublayers = nil
+        barLayers.removeAll()
+
+        let spacing: CGFloat = 3
+        let barWidth = max(1, (bounds.width - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+        for i in 0..<barCount {
+            let bar = CALayer()
+            bar.backgroundColor = NSColor.systemGreen.cgColor
+            bar.cornerRadius = barWidth / 2
+            let x = CGFloat(i) * (barWidth + spacing)
+            bar.frame = NSRect(x: x, y: bounds.midY - 1, width: barWidth, height: 2)
+            rootLayer.addSublayer(bar)
+            barLayers.append(bar)
+        }
+        render(animated: false)
+    }
+
+    private func render(animated: Bool) {
+        guard barLayers.count == levels.count, bounds.height > 0 else { return }
+        let maxHeight = bounds.height
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(!animated)
+        CATransaction.setAnimationDuration(0.09)
+        for (i, bar) in barLayers.enumerated() {
+            let h = max(2, levels[i] * maxHeight)
+            let color: NSColor = levels[i] > 0.75 ? .systemRed : (levels[i] > 0.4 ? .systemYellow : .systemGreen)
+            bar.backgroundColor = color.cgColor
+            bar.frame = NSRect(x: bar.frame.origin.x, y: (maxHeight - h) / 2, width: bar.frame.width, height: h)
+        }
+        CATransaction.commit()
     }
 }

@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let textInserter = TextInserter()
     private var micMenu: NSMenu?
     private var permissionWarningItem: NSMenuItem?
+    private var liveTranscriptionTimer: Timer?
+    private var isTranscribingPartial = false
 
     private static let selectedMicDefaultsKey = "SoTellMe.selectedMicUID"
 
@@ -65,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
-        menu.addItem(NSMenuItem(title: "SoTellMe — 🌐 pour dicter", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "SoTellMe — clic molette pour dicter", action: nil, keyEquivalent: ""))
 
         let warningItem = NSMenuItem(title: "⚠️ Permissions manquantes…", action: #selector(openPrivacySettings), keyEquivalent: "")
         warningItem.target = self
@@ -100,13 +102,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// Both Input Monitoring and Accessibility are pinned by code-signature
-    /// hash for ad-hoc-signed apps, so a rebuild silently invalidates
-    /// previously granted permissions without macOS re-prompting. This
-    /// actively re-triggers the prompts (or surfaces a menu warning if
-    /// already denied) instead of failing silently.
+    /// Accessibility is pinned by code-signature hash for ad-hoc-signed apps,
+    /// so a rebuild can silently invalidate a previously granted permission
+    /// without macOS re-prompting. This actively re-triggers the prompt (or
+    /// surfaces a menu warning if already denied) instead of failing
+    /// silently. The middle-click hotkey itself needs no special permission,
+    /// but Accessibility is still required to paste the transcribed text.
     private func checkPermissions() {
-        HotkeyManager.requestInputMonitoringAccessIfNeeded()
         let axOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(axOptions)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -116,9 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func refreshPermissionWarning() {
         var missing: [String] = []
-        if !HotkeyManager.hasInputMonitoringAccess() {
-            missing.append("Surveillance des entrées")
-        }
         if !AXIsProcessTrusted() {
             missing.append("Accessibilité")
         }
@@ -189,12 +188,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             indicator.show(state: "Écoute…")
             setIcon("mic.fill")
             NSSound(named: "Tink")?.play()
+            startLiveTranscription()
         } catch {
             NSLog("SoTellMe: failed to start recording: \(error)")
         }
     }
 
+    /// Periodically re-transcribes the audio captured so far so the HUD can
+    /// show a live, progressively-refined preview while the user is still
+    /// talking (Whisper has no true incremental decode, so this re-runs on
+    /// the growing buffer; ticks are skipped while one is already in flight).
+    private func startLiveTranscription() {
+        liveTranscriptionTimer?.invalidate()
+        liveTranscriptionTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: true) { [weak self] _ in
+            self?.transcribePartial()
+        }
+    }
+
+    private func stopLiveTranscription() {
+        liveTranscriptionTimer?.invalidate()
+        liveTranscriptionTimer = nil
+        isTranscribingPartial = false
+    }
+
+    private func transcribePartial() {
+        guard state == .listening, !isTranscribingPartial else { return }
+        let snapshot = audioRecorder.currentSamples()
+        guard snapshot.count > 16000 else { return }
+
+        isTranscribingPartial = true
+        Task {
+            defer { isTranscribingPartial = false }
+            do {
+                let rawText = try await transcriber.transcribe(samples: snapshot)
+                let text = vocabCorrector.apply(to: rawText)
+                guard state == .listening else { return }
+                indicator.updateTranscript(text)
+            } catch {
+                NSLog("SoTellMe: live transcription failed: \(error)")
+            }
+        }
+    }
+
     private func stopRecordingAndTranscribe() {
+        stopLiveTranscription()
         NSSound(named: "Pop")?.play()
         let samples = audioRecorder.stop()
         state = .transcribing

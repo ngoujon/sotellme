@@ -5,6 +5,7 @@ import AudioToolbox
 /// the format expected by Whisper.
 final class AudioRecorder {
     private let engine = AVAudioEngine()
+    private let samplesLock = NSLock()
     private var samples: [Float] = []
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -19,7 +20,9 @@ final class AudioRecorder {
     var preferredDeviceUID: String?
 
     func start() throws {
+        samplesLock.lock()
         samples.removeAll()
+        samplesLock.unlock()
         let input = engine.inputNode
         applyPreferredDeviceIfNeeded(to: input)
         let inputFormat = input.outputFormat(forBus: 0)
@@ -56,18 +59,30 @@ final class AudioRecorder {
         let frameLength = Int(outputBuffer.frameLength)
         let pointer = channelData[0]
         var peak: Float = 0
+        samplesLock.lock()
         samples.reserveCapacity(samples.count + frameLength)
         for i in 0..<frameLength {
             let v = pointer[i]
             samples.append(v)
             peak = max(peak, abs(v))
         }
+        samplesLock.unlock()
         onLevel?(peak)
+    }
+
+    /// A non-destructive snapshot of the audio captured so far, for live
+    /// (in-progress) transcription while still recording.
+    func currentSamples() -> [Float] {
+        samplesLock.lock()
+        defer { samplesLock.unlock() }
+        return samples
     }
 
     func stop() -> [Float] {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        samplesLock.lock()
+        defer { samplesLock.unlock() }
         return samples
     }
 
