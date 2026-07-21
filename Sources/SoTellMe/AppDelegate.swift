@@ -1,6 +1,6 @@
 import AppKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let hotkeyManager = HotkeyManager()
     private let audioRecorder = AudioRecorder()
@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let vocabCorrector = VocabCorrector()
     private let indicator = ListeningIndicator()
     private let textInserter = TextInserter()
+    private var micMenu: NSMenu?
+
+    private static let selectedMicDefaultsKey = "SoTellMe.selectedMicUID"
 
     private enum State {
         case loadingModel, idle, listening, transcribing
@@ -16,6 +19,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
+
+        audioRecorder.preferredDeviceUID = UserDefaults.standard.string(forKey: Self.selectedMicDefaultsKey)
+        audioRecorder.onLevel = { [weak self] level in
+            DispatchQueue.main.async {
+                self?.indicator.updateLevel(level)
+            }
+        }
 
         hotkeyManager.onHotkeyPressed = { [weak self] in
             self?.toggleRecording()
@@ -43,10 +53,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setIcon("hourglass")
 
         let menu = NSMenu()
+        menu.delegate = self
         menu.addItem(NSMenuItem(title: "SoTellMe — 🌐 pour dicter", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+
+        let micItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        let micSubmenu = NSMenu()
+        micItem.submenu = micSubmenu
+        menu.addItem(micItem)
+        micMenu = micSubmenu
+        refreshMicMenu()
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quitter", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        if menu === statusItem.menu {
+            refreshMicMenu()
+        }
+    }
+
+    private func refreshMicMenu() {
+        guard let micMenu = micMenu else { return }
+        micMenu.removeAllItems()
+
+        let selectedUID = UserDefaults.standard.string(forKey: Self.selectedMicDefaultsKey)
+
+        let systemItem = NSMenuItem(title: "Micro par défaut du système", action: #selector(selectMic(_:)), keyEquivalent: "")
+        systemItem.target = self
+        systemItem.state = (selectedUID == nil) ? .on : .off
+        micMenu.addItem(systemItem)
+        micMenu.addItem(NSMenuItem.separator())
+
+        let devices = MicrophoneManager.availableInputDevices()
+        if devices.isEmpty {
+            let emptyItem = NSMenuItem(title: "Aucun micro détecté", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            micMenu.addItem(emptyItem)
+        }
+        for device in devices {
+            let item = NSMenuItem(title: device.name, action: #selector(selectMic(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = device.uid
+            item.state = (device.uid == selectedUID) ? .on : .off
+            micMenu.addItem(item)
+        }
+    }
+
+    @objc private func selectMic(_ sender: NSMenuItem) {
+        let uid = sender.representedObject as? String
+        UserDefaults.standard.set(uid, forKey: Self.selectedMicDefaultsKey)
+        audioRecorder.preferredDeviceUID = uid
+        refreshMicMenu()
     }
 
     @objc private func quit() {
@@ -83,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let samples = audioRecorder.stop()
         state = .transcribing
         indicator.updateState("Transcription…")
+        indicator.updateLevel(0)
         setIcon("hourglass")
 
         Task {

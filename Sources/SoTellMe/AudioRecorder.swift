@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioToolbox
 
 /// Captures microphone audio and downsamples it to 16kHz mono Float32,
 /// the format expected by Whisper.
@@ -13,9 +14,14 @@ final class AudioRecorder {
     )!
     var onLevel: ((Float) -> Void)?
 
+    /// CoreAudio device UID to record from. `nil` means "use the system's
+    /// current default input device". Applied on the next `start()`.
+    var preferredDeviceUID: String?
+
     func start() throws {
         samples.removeAll()
         let input = engine.inputNode
+        applyPreferredDeviceIfNeeded(to: input)
         let inputFormat = input.outputFormat(forBus: 0)
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw AudioRecorderError.converterCreationFailed
@@ -63,6 +69,26 @@ final class AudioRecorder {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         return samples
+    }
+
+    private func applyPreferredDeviceIfNeeded(to input: AVAudioInputNode) {
+        guard let uid = preferredDeviceUID, let deviceID = MicrophoneManager.deviceID(forUID: uid) else { return }
+        guard let audioUnit = input.audioUnit else {
+            NSLog("SoTellMe: no audio unit available to select preferred microphone")
+            return
+        }
+        var mutableDeviceID = deviceID
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &mutableDeviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        if status != noErr {
+            NSLog("SoTellMe: failed to select preferred microphone (status \(status)), using system default")
+        }
     }
 }
 

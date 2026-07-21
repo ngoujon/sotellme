@@ -18,6 +18,10 @@ let package = Package(
             path: "Sources/SoTellMe",
             resources: [
                 .copy("Resources/vocab_corrections.json")
+            ],
+            linkerSettings: [
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("AudioToolbox")
             ]
         )
     ]
