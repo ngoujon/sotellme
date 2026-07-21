@@ -25,16 +25,22 @@ if [ -d "$BUNDLE_RESOURCES" ]; then
     cp -R "$BUNDLE_RESOURCES" "$APP_DIR/Contents/Resources/"
 fi
 
-echo "==> Ad-hoc code signing..."
-codesign --force --deep --sign - "$APP_DIR"
+echo "==> Code signing (stable local identity)..."
+# Signing with a real (even self-signed) identity instead of ad-hoc (`-`)
+# gives the app a stable Team/cert-based designated requirement, so TCC
+# (Micro/Accessibilité/Surveillance des entrées) keeps its grants across
+# rebuilds instead of invalidating them on every new binary hash.
+SIGN_IDENTITY="SoTellMe Local Dev"
+if ! security find-identity -v -p codesigning | grep -q "$SIGN_IDENTITY"; then
+    echo "!! Identité '$SIGN_IDENTITY' introuvable dans le trousseau, repli sur signature ad-hoc." >&2
+    echo "!! Les permissions devront être ré-accordées à chaque build." >&2
+    SIGN_IDENTITY="-"
+fi
+codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_DIR"
+
+echo "==> Relance de l'app..."
+killall "$APP_NAME" 2>/dev/null || true
+sleep 0.5
+open "$APP_DIR"
 
 echo "==> Done: $APP_DIR"
-echo ""
-echo "Prochaines étapes manuelles :"
-echo "  1. Ouvre l'app une première fois (clic droit > Ouvrir, car elle n'est pas notarisée)."
-echo "  2. Accorde les permissions Micro, Accessibilité ET Surveillance des entrées dans"
-echo "     Réglages Système > Confidentialité et sécurité (cette dernière est nécessaire"
-echo "     pour détecter le tap sur la touche 🌐)."
-echo "  3. Va dans Réglages Système > Clavier, et mets \"Appuyer sur la touche 🌐 pour :\""
-echo "     sur \"Ne rien faire\" (sinon macOS réagit aussi au tap)."
-echo "  4. Tap sur 🌐 pour démarrer/arrêter la dictée."
