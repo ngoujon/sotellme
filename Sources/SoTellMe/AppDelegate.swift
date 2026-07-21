@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
@@ -9,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let indicator = ListeningIndicator()
     private let textInserter = TextInserter()
     private var micMenu: NSMenu?
+    private var permissionWarningItem: NSMenuItem?
 
     private static let selectedMicDefaultsKey = "SoTellMe.selectedMicUID"
 
@@ -27,10 +29,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        hotkeyManager.onHotkeyPressed = { [weak self] in
+        hotkeyManager.onTap = { [weak self] in
             self?.toggleRecording()
         }
+        hotkeyManager.onHoldStart = { [weak self] in
+            guard let self, self.state == .idle else { return }
+            self.startRecording()
+        }
+        hotkeyManager.onHoldEnd = { [weak self] in
+            guard let self, self.state == .listening else { return }
+            self.stopRecordingAndTranscribe()
+        }
         hotkeyManager.register()
+        checkPermissions()
 
         Task {
             do {
@@ -55,6 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         menu.addItem(NSMenuItem(title: "SoTellMe — 🌐 pour dicter", action: nil, keyEquivalent: ""))
+
+        let warningItem = NSMenuItem(title: "⚠️ Permissions manquantes…", action: #selector(openPrivacySettings), keyEquivalent: "")
+        warningItem.target = self
+        warningItem.isHidden = true
+        menu.addItem(warningItem)
+        permissionWarningItem = warningItem
+
         menu.addItem(NSMenuItem.separator())
 
         let micItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
@@ -72,6 +90,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         if menu === statusItem.menu {
             refreshMicMenu()
+            refreshPermissionWarning()
+        }
+    }
+
+    @objc private func openPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Both Input Monitoring and Accessibility are pinned by code-signature
+    /// hash for ad-hoc-signed apps, so a rebuild silently invalidates
+    /// previously granted permissions without macOS re-prompting. This
+    /// actively re-triggers the prompts (or surfaces a menu warning if
+    /// already denied) instead of failing silently.
+    private func checkPermissions() {
+        HotkeyManager.requestInputMonitoringAccessIfNeeded()
+        let axOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(axOptions)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.refreshPermissionWarning()
+        }
+    }
+
+    private func refreshPermissionWarning() {
+        var missing: [String] = []
+        if !HotkeyManager.hasInputMonitoringAccess() {
+            missing.append("Surveillance des entrées")
+        }
+        if !AXIsProcessTrusted() {
+            missing.append("Accessibilité")
+        }
+        permissionWarningItem?.isHidden = missing.isEmpty
+        if !missing.isEmpty {
+            permissionWarningItem?.title = "⚠️ Autoriser : \(missing.joined(separator: ", "))…"
+            NSLog("SoTellMe: missing permissions: \(missing.joined(separator: ", "))")
         }
     }
 
@@ -134,12 +188,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             state = .listening
             indicator.show(state: "Écoute…")
             setIcon("mic.fill")
+            NSSound(named: "Tink")?.play()
         } catch {
             NSLog("SoTellMe: failed to start recording: \(error)")
         }
     }
 
     private func stopRecordingAndTranscribe() {
+        NSSound(named: "Pop")?.play()
         let samples = audioRecorder.stop()
         state = .transcribing
         indicator.updateState("Transcription…")
