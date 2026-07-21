@@ -185,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do {
             try audioRecorder.start()
             state = .listening
+            textInserter.reset()
             indicator.show(state: "Écoute…")
             setIcon("mic.fill")
             NSSound(named: "Tink")?.play()
@@ -194,10 +195,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// Periodically re-transcribes the audio captured so far so the HUD can
-    /// show a live, progressively-refined preview while the user is still
-    /// talking (Whisper has no true incremental decode, so this re-runs on
-    /// the growing buffer; ticks are skipped while one is already in flight).
+    /// Periodically re-transcribes the audio captured so far so the HUD (and
+    /// the focused app, via live keystrokes) show a progressively-refined
+    /// preview while the user is still talking (Whisper has no true
+    /// incremental decode, so this re-runs on the growing buffer; ticks are
+    /// skipped while one is already in flight).
     private func startLiveTranscription() {
         liveTranscriptionTimer?.invalidate()
         liveTranscriptionTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: true) { [weak self] _ in
@@ -224,6 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let text = vocabCorrector.apply(to: rawText)
                 guard state == .listening else { return }
                 indicator.updateTranscript(text)
+                textInserter.update(text)
             } catch {
                 NSLog("SoTellMe: live transcription failed: \(error)")
             }
@@ -248,9 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             do {
                 let rawText = try await transcriber.transcribe(samples: samples)
                 let text = vocabCorrector.apply(to: rawText)
-                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    textInserter.insert(text)
-                }
+                textInserter.update(text)
             } catch {
                 NSLog("SoTellMe: transcription failed: \(error)")
             }

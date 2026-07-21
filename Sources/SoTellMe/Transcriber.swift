@@ -28,7 +28,19 @@ final class Transcriber {
             task: .transcribe,
             language: "fr",
             temperature: 0,
+            // WhisperKit defaults to up to 5 extra decode passes at rising
+            // temperature whenever its quality heuristics flag the greedy
+            // output as suspect. For short, near-field dictation this mostly
+            // triggers false positives — it multiplies decode cost (this runs
+            // on every 1.2s live tick, not just the final pass) and the
+            // higher-temperature retries sample more randomly, which can
+            // introduce word errors rather than fix them. Disabling it keeps
+            // a single deterministic greedy pass.
+            temperatureFallbackCount: 0,
             usePrefillPrompt: true,
+            // The app only ever reads `.text`; timestamp tokens are pure
+            // unneeded decode overhead here.
+            withoutTimestamps: true,
             promptTokens: promptTokens(using: whisperKit)
         )
 
