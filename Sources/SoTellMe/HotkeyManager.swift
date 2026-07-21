@@ -1,61 +1,81 @@
 import Carbon
 import AppKit
 
-/// Global hotkey capture for F5, using the Carbon Event Manager.
-/// No Accessibility/Input Monitoring permission is required for this API.
+/// Detects a solo tap of the Globe/Fn key (🌐) to toggle dictation.
+///
+/// The Globe key is modifier-only: it never produces a regular keyDown, only
+/// `flagsChanged` events, so it can't be captured via Carbon's
+/// `RegisterEventHotKey`. Instead we watch `flagsChanged` for keyCode 0x3F
+/// (kVK_Function) and treat a quick down-then-up with no other key pressed
+/// in between as a "tap". This requires the Input Monitoring permission
+/// (Réglages Système > Confidentialité et sécurité > Surveillance des entrées).
 final class HotkeyManager {
-    private var hotKeyRef: EventHotKeyRef?
-    private var eventHandler: EventHandlerRef?
     var onHotkeyPressed: (() -> Void)?
 
-    private static let hotKeyID = EventHotKeyID(signature: OSType(0x53544D45), id: 1) // 'STME'
+    private static let functionKeyCode: UInt16 = UInt16(kVK_Function)
+    private static let maxTapDuration: TimeInterval = 1.0
+
+    private var globalFlagsMonitor: Any?
+    private var localFlagsMonitor: Any?
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
+
+    private var functionKeyDownAt: Date?
+    private var otherKeyPressedDuringHold = false
 
     func register() {
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: OSType(kEventHotKeyPressed)
-        )
-
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-
-        InstallEventHandler(GetApplicationEventTarget(), { _, eventRef, userData -> OSStatus in
-            guard let eventRef = eventRef, let userData = userData else { return noErr }
-
-            var hotKeyID = EventHotKeyID()
-            let status = GetEventParameter(
-                eventRef,
-                EventParamName(kEventParamDirectObject),
-                EventParamType(typeEventHotKeyID),
-                nil,
-                MemoryLayout<EventHotKeyID>.size,
-                nil,
-                &hotKeyID
-            )
-            guard status == noErr, hotKeyID.id == HotkeyManager.hotKeyID.id else { return noErr }
-
-            let manager = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
-            manager.onHotkeyPressed?()
-            return noErr
-        }, 1, &eventType, selfPtr, &eventHandler)
-
-        RegisterEventHotKey(
-            UInt32(kVK_F5),
-            0,
-            Self.hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
-        )
+        globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            self?.handleFlagsChanged(event)
+        }
+        localFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            self?.handleFlagsChanged(event)
+            return event
+        }
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleOtherKeyDown()
+        }
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleOtherKeyDown()
+            return event
+        }
     }
 
     func unregister() {
-        if let hotKeyRef = hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
+        for monitor in [globalFlagsMonitor, localFlagsMonitor, globalKeyMonitor, localKeyMonitor] {
+            if let monitor = monitor {
+                NSEvent.removeMonitor(monitor)
+            }
         }
-        if let eventHandler = eventHandler {
-            RemoveEventHandler(eventHandler)
-            self.eventHandler = nil
+        globalFlagsMonitor = nil
+        localFlagsMonitor = nil
+        globalKeyMonitor = nil
+        localKeyMonitor = nil
+    }
+
+    private func handleOtherKeyDown() {
+        if functionKeyDownAt != nil {
+            otherKeyPressedDuringHold = true
         }
+    }
+
+    private func handleFlagsChanged(_ event: NSEvent) {
+        guard event.keyCode == Self.functionKeyCode else { return }
+
+        if event.modifierFlags.contains(.function) {
+            functionKeyDownAt = Date()
+            otherKeyPressedDuringHold = false
+            return
+        }
+
+        defer {
+            functionKeyDownAt = nil
+            otherKeyPressedDuringHold = false
+        }
+
+        guard let downAt = functionKeyDownAt else { return }
+        let heldDuration = Date().timeIntervalSince(downAt)
+        guard !otherKeyPressedDuringHold, heldDuration < Self.maxTapDuration else { return }
+
+        onHotkeyPressed?()
     }
 }

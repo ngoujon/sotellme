@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setIcon("hourglass")
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "SoTellMe — F5 pour dicter", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "SoTellMe — 🌐 pour dicter", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quitter", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu

@@ -1,16 +1,24 @@
 # SoTellMe
 
-App menu-bar macOS pour dicter du texte au clavier via F5, avec transcription
-100% locale (aucune donnée envoyée à un serveur). Optimisée pour comprendre le
-vocabulaire informatique et gaming.
+App menu-bar macOS pour dicter du texte au clavier via la touche **Globe (🌐)**,
+avec transcription 100% locale (aucune donnée envoyée à un serveur). Optimisée
+pour comprendre le vocabulaire informatique et gaming.
 
 ## Comment ça marche
 
-- **F5** démarre l'écoute (un indicateur discret apparaît en haut de l'écran).
-- Un second appui sur **F5** arrête l'écoute et lance la transcription.
+- Un tap sur **🌐** démarre l'écoute (un indicateur discret apparaît en haut de
+  l'écran).
+- Un second tap sur **🌐** arrête l'écoute et lance la transcription.
 - Le texte transcrit est automatiquement collé (Cmd+V) dans l'application active.
 - Tout tourne en local via [WhisperKit](https://github.com/argmaxinc/WhisperKit)
   (Whisper en CoreML, accéléré par le Neural Engine sur Apple Silicon).
+
+> La touche Globe n'a pas d'événement clavier standard (c'est une touche
+> modificatrice) : elle est capturée via une surveillance globale des
+> événements clavier (`NSEvent`), qui nécessite la permission **Surveillance
+> des entrées** (voir ci-dessous). Un tap = appui puis relâchement rapide sans
+> appuyer sur une autre touche entre les deux (sinon c'est traité comme un
+> raccourci Fn+quelque chose et ignoré).
 
 ## Build
 
@@ -26,14 +34,19 @@ Génère `dist/SoTellMe.app` (build release + bundle + signature ad-hoc).
 2. Ouvre l'app une première fois via **clic droit > Ouvrir** (elle n'est pas
    notarisée par Apple, donc un double-clic simple sera bloqué par Gatekeeper
    la première fois).
-3. macOS va demander deux permissions — accepte les deux :
+3. macOS va demander plusieurs permissions — accepte-les toutes :
    - **Microphone** (pour écouter ta voix)
    - **Accessibilité** (Réglages Système > Confidentialité et sécurité >
      Accessibilité — nécessaire pour coller le texte automatiquement)
-4. **Important** : va dans Réglages Système > Clavier > Raccourcis clavier >
-   Dictée, et désactive (ou change) le raccourci système lié à F5. Sinon la
-   Dictée d'Apple se déclenchera en même temps que SoTellMe quand tu appuies
-   sur F5.
+   - **Surveillance des entrées** (Réglages Système > Confidentialité et
+     sécurité > Surveillance des entrées — nécessaire pour détecter le tap
+     sur la touche Globe). Si la popup n'apparaît pas automatiquement,
+     ajoute `SoTellMe.app` toi-même dans cette liste et coche-la, puis
+     relance l'app.
+4. **Important** : va dans Réglages Système > Clavier, et repère le réglage
+   *"Appuyer sur la touche 🌐 pour :"* — mets-le sur **"Ne rien faire"**.
+   Sinon macOS ouvrira le sélecteur d'emojis (ou la Dictée, selon la version)
+   en même temps que SoTellMe à chaque tap.
 5. Au premier lancement, l'app télécharge le modèle Whisper (~500 Mo-1 Go,
    une seule fois, puis tout fonctionne hors-ligne).
 
@@ -77,7 +90,7 @@ sur ta machine, tu peux passer à `base` en éditant l'appel
 Sources/SoTellMe/
   main.swift              Point d'entrée, app menu-bar (pas d'icône Dock)
   AppDelegate.swift        Orchestration (état, statusItem)
-  HotkeyManager.swift       Capture globale de F5 (Carbon)
+  HotkeyManager.swift       Capture globale du tap sur la touche Globe (NSEvent)
   AudioRecorder.swift       Capture micro → PCM 16kHz mono
   Transcriber.swift         Wrapper WhisperKit + biais vocabulaire
   VocabCorrector.swift      Corrections post-transcription
