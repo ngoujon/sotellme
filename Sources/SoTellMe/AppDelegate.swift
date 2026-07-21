@@ -13,6 +13,7 @@ import ApplicationServices
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let hotkeyManager = HotkeyManager()
+    private let hotkeySettingsWindow = HotkeySettingsWindowController()
     private let audioRecorder = AudioRecorder()
     private let transcriber = Transcriber()
     private let vocabCorrector = VocabCorrector()
@@ -20,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let textInserter = TextInserter()
     private var micMenu: NSMenu?
     private var permissionWarningItem: NSMenuItem?
+    private var hotkeyMenuItem: NSMenuItem?
     private var liveTranscriptionTimer: Timer?
     private var isTranscribingPartial = false
     private var lastLiveSampleCount = 0
@@ -69,6 +71,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.stopRecordingAndTranscribe()
         }
         hotkeyManager.register()
+        hotkeyManager.keyboardBinding = HotkeyBindingStore.load()
+        hotkeySettingsWindow.onBindingChange = { [weak self] binding in
+            self?.hotkeyManager.keyboardBinding = binding
+            self?.refreshHotkeyMenuItem()
+        }
         checkPermissions()
 
         Task {
@@ -110,6 +117,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         micMenu = micSubmenu
         refreshMicMenu()
 
+        let hotkeyItem = NSMenuItem(title: "Raccourci de dictée…", action: #selector(openHotkeySettings), keyEquivalent: "")
+        hotkeyItem.target = self
+        menu.addItem(hotkeyItem)
+        hotkeyMenuItem = hotkeyItem
+        refreshHotkeyMenuItem()
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quitter", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -119,6 +132,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if menu === statusItem.menu {
             refreshMicMenu()
             refreshPermissionWarning()
+            refreshHotkeyMenuItem()
+        }
+    }
+
+    @objc private func openHotkeySettings() {
+        hotkeySettingsWindow.show(currentBinding: hotkeyManager.keyboardBinding)
+    }
+
+    private func refreshHotkeyMenuItem() {
+        if let binding = hotkeyManager.keyboardBinding {
+            hotkeyMenuItem?.title = "Raccourci de dictée (\(binding.displayString))…"
+        } else {
+            hotkeyMenuItem?.title = "Raccourci de dictée…"
         }
     }
 
