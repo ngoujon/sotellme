@@ -100,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
-        menu.addItem(NSMenuItem(title: "SoTellMe — clic molette pour dicter", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "SoTellMe — utilise le raccourci clavier pour dicter", action: nil, keyEquivalent: ""))
 
         let warningItem = NSMenuItem(title: "⚠️ Permissions manquantes…", action: #selector(openPrivacySettings), keyEquivalent: "")
         warningItem.target = self
@@ -144,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let binding = hotkeyManager.keyboardBinding {
             hotkeyMenuItem?.title = "Raccourci de dictée (\(binding.displayString))…"
         } else {
-            hotkeyMenuItem?.title = "Raccourci de dictée…"
+            hotkeyMenuItem?.title = "Raccourci de dictée (aucun défini)…"
         }
     }
 
@@ -158,8 +158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// so a rebuild can silently invalidate a previously granted permission
     /// without macOS re-prompting. This actively re-triggers the prompt (or
     /// surfaces a menu warning if already denied) instead of failing
-    /// silently. The middle-click hotkey itself needs no special permission,
-    /// but Accessibility is still required to paste the transcribed text.
+    /// silently. It's required both for the global keyboard shortcut monitor
+    /// and to paste the transcribed text.
     private func checkPermissions() {
         let axOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(axOptions)
@@ -280,7 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             defer { isTranscribingPartial = false }
             do {
                 let rawText = try await transcriber.transcribe(samples: snapshot)
-                let text = vocabCorrector.apply(to: rawText)
+                let text = vocabCorrector.apply(to: NoiseFilter.apply(to: rawText))
                 guard state == .listening else { return }
                 indicator.updateTranscript(text)
                 textInserter.update(text)
@@ -336,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             do {
                 let rawText = try await transcriber.transcribe(samples: samples)
-                let text = vocabCorrector.apply(to: rawText)
+                let text = vocabCorrector.apply(to: NoiseFilter.apply(to: rawText))
                 textInserter.update(text)
             } catch {
                 Log.error("transcription failed: \(error)")

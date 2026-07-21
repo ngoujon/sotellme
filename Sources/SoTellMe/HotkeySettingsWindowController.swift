@@ -1,9 +1,9 @@
 import AppKit
 
-/// A small window for recording an optional keyboard shortcut (in addition
-/// to the always-available middle-click) to start/stop dictation. Supports
-/// a single key, a key+modifiers combo, or two modifier keys held together
-/// with no regular key (e.g. ⌃⌥).
+/// A small window for recording the keyboard shortcut that triggers
+/// dictation. Supports a single key, a key+modifiers combo, or two modifier
+/// keys held together with no regular key (e.g. ⌃⌥) — left and right
+/// Command/Option/Control/Shift are recorded as distinct keys.
 final class HotkeySettingsWindowController: NSObject, NSWindowDelegate {
     /// Called whenever the binding changes (new value, or `nil` on clear).
     var onBindingChange: ((HotkeyBinding?) -> Void)?
@@ -13,7 +13,7 @@ final class HotkeySettingsWindowController: NSObject, NSWindowDelegate {
     private var recordButton: NSButton?
 
     private var isRecording = false
-    private var peakModifiers: NSEvent.ModifierFlags = []
+    private var peakModifierKeyCodes: Set<UInt16> = []
     private var recordingMonitor: Any?
 
     func show(currentBinding: HotkeyBinding?) {
@@ -35,7 +35,7 @@ final class HotkeySettingsWindowController: NSObject, NSWindowDelegate {
 
         let content = NSView(frame: rect)
 
-        let info = NSTextField(wrappingLabelWithString: "Le clic molette reste toujours actif. Tu peux définir en plus un raccourci clavier : une touche seule, une combinaison (ex. ⌘⇧D), ou deux touches de modification maintenues ensemble (ex. ⌃⌥).")
+        let info = NSTextField(wrappingLabelWithString: "Définis le raccourci clavier qui déclenche la dictée : une touche seule, une combinaison (ex. ⌘⇧D), ou deux touches de modification maintenues ensemble (ex. ⌃⌥). Les touches de gauche et de droite (G/D) sont distinguées.")
         info.frame = NSRect(x: 20, y: 108, width: 340, height: 55)
         info.font = .systemFont(ofSize: 11)
         info.textColor = .secondaryLabelColor
@@ -78,7 +78,7 @@ final class HotkeySettingsWindowController: NSObject, NSWindowDelegate {
 
     private func startRecording() {
         isRecording = true
-        peakModifiers = []
+        peakModifierKeyCodes = []
         recordButton?.title = "Appuie sur une touche (Échap pour annuler)…"
         currentLabel?.stringValue = "…"
         recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
@@ -88,18 +88,18 @@ final class HotkeySettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func handleRecordingEvent(_ event: NSEvent) {
-        let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let activeModifiers = HotkeyBinding.activeModifierKeyCodes(from: event)
         switch event.type {
         case .keyDown:
             if event.keyCode == 53 {
                 stopRecording(cancelled: true)
                 return
             }
-            finalize(HotkeyBinding(keyCode: event.keyCode, modifiers: mods.rawValue))
+            finalize(HotkeyBinding(keyCode: event.keyCode, modifierKeyCodes: activeModifiers))
         case .flagsChanged:
-            peakModifiers.formUnion(mods)
-            if mods.isEmpty, !peakModifiers.isEmpty {
-                finalize(HotkeyBinding(keyCode: nil, modifiers: peakModifiers.rawValue))
+            peakModifierKeyCodes.formUnion(activeModifiers)
+            if activeModifiers.isEmpty, !peakModifierKeyCodes.isEmpty {
+                finalize(HotkeyBinding(keyCode: nil, modifierKeyCodes: peakModifierKeyCodes))
             }
         default:
             break
