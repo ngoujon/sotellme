@@ -89,7 +89,7 @@ final class AudioRecorder {
     private func applyPreferredDeviceIfNeeded(to input: AVAudioInputNode) {
         guard let uid = preferredDeviceUID, let deviceID = MicrophoneManager.deviceID(forUID: uid) else { return }
         guard let audioUnit = input.audioUnit else {
-            NSLog("SoTellMe: no audio unit available to select preferred microphone")
+            Log.error("no audio unit available to select preferred microphone")
             return
         }
         var mutableDeviceID = deviceID
@@ -102,7 +102,7 @@ final class AudioRecorder {
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
         if status != noErr {
-            NSLog("SoTellMe: failed to select preferred microphone (status \(status)), using system default")
+            Log.error("failed to select preferred microphone (status \(status)), using system default")
         }
     }
 }

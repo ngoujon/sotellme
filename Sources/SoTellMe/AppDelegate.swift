@@ -1,6 +1,15 @@
 import AppKit
 import ApplicationServices
 
+/// `@MainActor` isolation matters here beyond documentation: every `Task { }`
+/// started from a method on this class inherits the actor context it was
+/// created in, so keeping the whole delegate on the main actor guarantees
+/// those tasks resume on the main thread after each `await`. Without it,
+/// AppKit calls made after an `await` (e.g. `indicator.hide()` in
+/// `stopRecordingAndTranscribe()`) can land on a background thread and crash
+/// — this happened repeatedly (SIGTRAP in `NSWindow` ordering) before this
+/// annotation was added.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let hotkeyManager = HotkeyManager()
@@ -13,6 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var permissionWarningItem: NSMenuItem?
     private var liveTranscriptionTimer: Timer?
     private var isTranscribingPartial = false
+    private var lastLiveSampleCount = 0
+
+    /// Below this many trailing samples (~0.35s) with no audible level, a
+    /// final re-transcription pass is skipped since the last live tick
+    /// almost certainly already covers everything that was said.
+    private static let finalPassSkipSampleThreshold = 5600
+    private static let finalPassSkipPeakThreshold: Float = 0.02
 
     private static let selectedMicDefaultsKey = "SoTellMe.selectedMicUID"
 
@@ -51,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 state = .idle
                 setIcon("mic")
             } catch {
-                NSLog("SoTellMe: failed to load Whisper model: \(error)")
+                Log.error("failed to load Whisper model: \(error)")
                 setIcon("exclamationmark.triangle")
             }
         }
@@ -124,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         permissionWarningItem?.isHidden = missing.isEmpty
         if !missing.isEmpty {
             permissionWarningItem?.title = "⚠️ Autoriser : \(missing.joined(separator: ", "))…"
-            NSLog("SoTellMe: missing permissions: \(missing.joined(separator: ", "))")
+            Log.error("missing permissions: \(missing.joined(separator: ", "))")
         }
     }
 
@@ -186,12 +202,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try audioRecorder.start()
             state = .listening
             textInserter.reset()
+            lastLiveSampleCount = 0
             indicator.show(state: "Écoute…")
             setIcon("mic.fill")
             NSSound(named: "Tink")?.play()
             startLiveTranscription()
         } catch {
-            NSLog("SoTellMe: failed to start recording: \(error)")
+            Log.error("failed to start recording: \(error)")
         }
     }
 
@@ -203,7 +220,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startLiveTranscription() {
         liveTranscriptionTimer?.invalidate()
         liveTranscriptionTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: true) { [weak self] _ in
-            self?.transcribePartial()
+            // Timer always fires on the run loop it was scheduled on (main,
+            // since this is called from @MainActor code); this just asserts
+            // that known fact to the compiler.
+            MainActor.assumeIsolated { self?.transcribePartial() }
         }
     }
 
@@ -227,21 +247,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard state == .listening else { return }
                 indicator.updateTranscript(text)
                 textInserter.update(text)
+                lastLiveSampleCount = snapshot.count
             } catch {
-                NSLog("SoTellMe: live transcription failed: \(error)")
+                Log.error("live transcription failed: \(error)")
             }
         }
     }
 
+    /// The final pass re-transcribes the *complete* stopped-recording buffer
+    /// because the last live tick can be up to 1.2s stale — if you keep
+    /// talking right up until release, those last words may never have been
+    /// through a live pass. But when there's no meaningful new audio since
+    /// that last tick (silence, or a natural pause before releasing), the
+    /// live text is already final — re-decoding would just reproduce the
+    /// same text, so it's skipped to avoid the visible "Transcription…" wait.
     private func stopRecordingAndTranscribe() {
         stopLiveTranscription()
         NSSound(named: "Pop")?.play()
         let samples = audioRecorder.stop()
-        state = .transcribing
-        indicator.updateState("Transcription…")
-        indicator.updateLevel(0)
-        setIcon("hourglass")
 
+        let tail = samples[min(lastLiveSampleCount, samples.count)...]
+        let tailPeak = tail.reduce(into: Float(0)) { $0 = max($0, abs($1)) }
+        let hasNewSpeech = tail.count > Self.finalPassSkipSampleThreshold || tailPeak > Self.finalPassSkipPeakThreshold
+        guard lastLiveSampleCount > 0, !hasNewSpeech else {
+            state = .transcribing
+            indicator.updateLevel(0)
+            setIcon("hourglass")
+            runFinalTranscription(samples: samples)
+            return
+        }
+
+        indicator.hide()
+        state = .idle
+        setIcon("mic")
+    }
+
+    private func runFinalTranscription(samples: [Float]) {
+        indicator.updateState("Transcription…")
         Task {
             defer {
                 indicator.hide()
@@ -253,7 +295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let text = vocabCorrector.apply(to: rawText)
                 textInserter.update(text)
             } catch {
-                NSLog("SoTellMe: transcription failed: \(error)")
+                Log.error("transcription failed: \(error)")
             }
         }
     }
