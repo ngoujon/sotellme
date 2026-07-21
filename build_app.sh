@@ -17,6 +17,7 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 cp "$BUILD_DIR/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$ROOT_DIR/AppResources/Info.plist" "$APP_DIR/Contents/Info.plist"
+cp "$ROOT_DIR/AppResources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 # Bundle resources produced by SwiftPM (e.g. vocab_corrections.json) so
 # Bundle.module resolves correctly inside the packaged .app too.

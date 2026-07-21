@@ -124,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshHotkeyMenuItem()
 
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Redémarrer", action: #selector(restart), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Quitter", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
     }
@@ -215,6 +216,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    @objc private func restart() {
+        let bundlePath = Bundle.main.bundlePath
+        let relaunch = Process()
+        if bundlePath.hasSuffix(".app") {
+            // `-n` forces a fresh instance instead of just activating this
+            // (about to die) one.
+            relaunch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            relaunch.arguments = ["-n", bundlePath]
+        } else if let executablePath = Bundle.main.executablePath {
+            relaunch.executableURL = URL(fileURLWithPath: executablePath)
+        } else {
+            return
+        }
+        try? relaunch.run()
         NSApp.terminate(nil)
     }
 
