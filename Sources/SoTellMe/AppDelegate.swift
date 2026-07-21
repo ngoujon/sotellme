@@ -24,11 +24,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isTranscribingPartial = false
     private var lastLiveSampleCount = 0
 
+    /// Below this peak amplitude, audio is treated as silence: Whisper is
+    /// never invoked on it (it otherwise tends to hallucinate boilerplate
+    /// like subtitle-credit text on near-silent input), and it's also used
+    /// to decide whether a stopped recording's trailing audio holds new
+    /// speech worth a final re-transcription pass.
+    private static let silencePeakThreshold: Float = 0.02
+
     /// Below this many trailing samples (~0.35s) with no audible level, a
     /// final re-transcription pass is skipped since the last live tick
     /// almost certainly already covers everything that was said.
     private static let finalPassSkipSampleThreshold = 5600
-    private static let finalPassSkipPeakThreshold: Float = 0.02
+
+    private static func peakAmplitude<C: Collection>(_ samples: C) -> Float where C.Element == Float {
+        samples.reduce(into: Float(0)) { $0 = max($0, abs($1)) }
+    }
 
     private static let selectedMicDefaultsKey = "SoTellMe.selectedMicUID"
 
@@ -237,6 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard state == .listening, !isTranscribingPartial else { return }
         let snapshot = audioRecorder.currentSamples()
         guard snapshot.count > 16000 else { return }
+        guard Self.peakAmplitude(snapshot) > Self.silencePeakThreshold else { return }
 
         isTranscribingPartial = true
         Task {
@@ -266,9 +277,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSSound(named: "Pop")?.play()
         let samples = audioRecorder.stop()
 
+        guard Self.peakAmplitude(samples) > Self.silencePeakThreshold else {
+            indicator.hide()
+            state = .idle
+            setIcon("mic")
+            return
+        }
+
         let tail = samples[min(lastLiveSampleCount, samples.count)...]
-        let tailPeak = tail.reduce(into: Float(0)) { $0 = max($0, abs($1)) }
-        let hasNewSpeech = tail.count > Self.finalPassSkipSampleThreshold || tailPeak > Self.finalPassSkipPeakThreshold
+        let tailPeak = Self.peakAmplitude(tail)
+        let hasNewSpeech = tail.count > Self.finalPassSkipSampleThreshold || tailPeak > Self.silencePeakThreshold
         guard lastLiveSampleCount > 0, !hasNewSpeech else {
             state = .transcribing
             indicator.updateLevel(0)
