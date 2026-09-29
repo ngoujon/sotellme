@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="SoTellMe"
-BUNDLE_ID="com.nicolasgoujon.sotellme"
+BUNDLE_ID="com.ngoujon.sotellme"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$ROOT_DIR/.build/release"
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"

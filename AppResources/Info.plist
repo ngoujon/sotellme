@@ -7,7 +7,7 @@
     <key>CFBundleDisplayName</key>
     <string>SoTellMe</string>
     <key>CFBundleIdentifier</key>
-    <string>com.nicolasgoujon.sotellme</string>
+    <string>com.ngoujon.sotellme</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>

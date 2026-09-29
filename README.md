@@ -43,15 +43,15 @@ Produces `dist/SoTellMe.app` (release build + bundle + signature with a stable l
 
 ```bash
 cp -R dist/SoTellMe.app /Applications/
-cp LaunchAgent/com.nicolasgoujon.sotellme.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.nicolasgoujon.sotellme.plist
+cp LaunchAgent/com.ngoujon.sotellme.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.ngoujon.sotellme.plist
 ```
 
 To disable:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.nicolasgoujon.sotellme.plist
-rm ~/Library/LaunchAgents/com.nicolasgoujon.sotellme.plist
+launchctl unload ~/Library/LaunchAgents/com.ngoujon.sotellme.plist
+rm ~/Library/LaunchAgents/com.ngoujon.sotellme.plist
 ```
 
 ## Technical and gaming vocabulary
