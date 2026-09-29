@@ -11,7 +11,7 @@ enum Log {
         return dir.appendingPathComponent("SoTellMe.log")
     }()
 
-    private static let queue = DispatchQueue(label: "com.ngoujon.sotellme.log")
+    private static let queue = DispatchQueue(label: "com.nicolasgoujon.sotellme.log")
 
     private static let formatter: DateFormatter = {
         let f = DateFormatter()
