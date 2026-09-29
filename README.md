@@ -61,7 +61,7 @@ rm ~/Library/LaunchAgents/com.ngoujon.sotellme.plist
 
 ## Whisper model
 
-Default: `small` (multilingual). To reduce CPU / memory usage, switch to `base` by editing the `transcriber.loadModel(named:)` call in `AppDelegate.swift`.
+Default: `small` (multilingual). To reduce CPU / memory usage, pass `named: "base"` to `transcriber.loadModel()` in `AppDelegate.swift` (the default is set in `Transcriber.swift`).
 
 ## Project structure
 
