@@ -1,38 +1,45 @@
 import AppKit
 
-/// Detects two gestures — a quick tap vs. a hold past `holdThreshold` — on
-/// the user-configured keyboard shortcut (`keyboardBinding`), which can be a
-/// key+modifiers combo, a bare key, or two modifiers held together. This is
-/// the only trigger for dictation; it's set from the "Raccourci de dictée…"
-/// settings window and does nothing until one is configured.
+/// Watches the user-configured keyboard shortcut (`keyboardBinding`), which
+/// can be a key+modifiers combo, a bare function key, or modifier keys held
+/// together. This is the main trigger for dictation; it's set from the
+/// "Raccourci de dictée…" settings window and does nothing until one is
+/// configured.
 ///
-/// A tap toggles listening on/off, a hold does push-to-talk, driving
-/// `onTap` / `onHoldStart` / `onHoldEnd`.
+/// Each press fires `onPress` immediately (one press starts dictation, the
+/// next one stops it); releasing the key does nothing.
+///
+/// For modifier-only bindings (e.g. ⌃⌥), pressing any regular key while the
+/// modifiers are still held means the user is typing an ordinary shortcut
+/// (⌃⌥T…), not dictating, so the press is taken back via `onCancel`.
 ///
 /// Global keyboard monitoring (`.keyDown`/`.flagsChanged`) requires the app
-/// be trusted for Accessibility, which SoTellMe already requests to paste
+/// be trusted for Accessibility, which SoTellMe already requests to type
 /// transcribed text — so no extra permission prompt is needed for this.
 final class HotkeyManager {
-    var onTap: (() -> Void)?
-    var onHoldStart: (() -> Void)?
-    var onHoldEnd: (() -> Void)?
+    var onPress: (() -> Void)?
+    var onCancel: (() -> Void)?
 
     /// The keyboard shortcut that drives dictation. `nil` disables the
-    /// trigger entirely (no way to start dictation until one is set).
+    /// trigger entirely.
     var keyboardBinding: HotkeyBinding? {
         didSet { installKeyboardMonitorsIfNeeded() }
     }
 
-    private static let holdThreshold: TimeInterval = 0.35
+    /// While `true`, key events are ignored — set while the settings window
+    /// records a new shortcut, so pressing the current one there doesn't
+    /// also start a dictation.
+    var isSuspended = false {
+        didSet { if isSuspended { modifiersActive = false } }
+    }
 
     private var isRegistered = false
 
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
 
-    private var keyIsDown = false
-    private var keyHoldCommitted = false
-    private var keyHoldTimer: Timer?
+    /// For modifier-only bindings: whether the required modifiers are
+    /// currently held (the press already fired).
     private var modifiersActive = false
 
     func register() {
@@ -42,34 +49,30 @@ final class HotkeyManager {
 
     func unregister() {
         isRegistered = false
-        for monitor in [globalKeyMonitor, localKeyMonitor] {
-            if let monitor = monitor {
-                NSEvent.removeMonitor(monitor)
-            }
-        }
-        globalKeyMonitor = nil
-        localKeyMonitor = nil
-        keyHoldTimer?.invalidate()
-        keyHoldTimer = nil
+        removeMonitors()
     }
 
-    // MARK: Keyboard
+    /// Re-creates the event monitors. Needed after Accessibility is granted
+    /// while the app is running: monitors installed while untrusted never
+    /// start receiving events on their own.
+    func reinstallMonitors() {
+        installKeyboardMonitorsIfNeeded()
+    }
 
-    private func installKeyboardMonitorsIfNeeded() {
+    private func removeMonitors() {
         for monitor in [globalKeyMonitor, localKeyMonitor] {
             if let monitor = monitor { NSEvent.removeMonitor(monitor) }
         }
         globalKeyMonitor = nil
         localKeyMonitor = nil
-        keyIsDown = false
-        keyHoldCommitted = false
         modifiersActive = false
-        keyHoldTimer?.invalidate()
-        keyHoldTimer = nil
+    }
 
+    private func installKeyboardMonitorsIfNeeded() {
+        removeMonitors()
         guard isRegistered, keyboardBinding != nil else { return }
 
-        let mask: NSEvent.EventTypeMask = [.keyDown, .keyUp, .flagsChanged]
+        let mask: NSEvent.EventTypeMask = [.keyDown, .flagsChanged]
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             self?.handleKeyEvent(event)
         }
@@ -80,62 +83,31 @@ final class HotkeyManager {
     }
 
     private func handleKeyEvent(_ event: NSEvent) {
-        guard let binding = keyboardBinding else { return }
+        guard !isSuspended, let binding = keyboardBinding else { return }
         let activeModifiers = HotkeyBinding.activeModifierKeyCodes(from: event)
 
         if let keyCode = binding.keyCode {
-            switch event.type {
-            case .keyDown:
-                guard !event.isARepeat, event.keyCode == keyCode, activeModifiers == binding.modifierKeyCodes else { return }
-                beginKeyPress()
-            case .keyUp:
-                guard event.keyCode == keyCode else { return }
-                endKeyPress()
-            default:
-                break
-            }
+            guard event.type == .keyDown, !event.isARepeat,
+                  event.keyCode == keyCode, activeModifiers == binding.modifierKeyCodes else { return }
+            onPress?()
         } else {
-            // Modifier-only binding: the gesture is "down" while exactly the
-            // required physical modifier keys are held, "up" once that's no
-            // longer true.
+            // Modifier-only binding: fires once when exactly the required
+            // physical modifier keys become held; re-arms once released.
+            if event.type == .keyDown {
+                if modifiersActive {
+                    modifiersActive = false
+                    onCancel?()
+                }
+                return
+            }
             guard event.type == .flagsChanged else { return }
             let isActive = !binding.modifierKeyCodes.isEmpty && activeModifiers == binding.modifierKeyCodes
             if isActive, !modifiersActive {
                 modifiersActive = true
-                beginKeyPress()
-            } else if !isActive, modifiersActive {
+                onPress?()
+            } else if !isActive {
                 modifiersActive = false
-                endKeyPress()
             }
         }
-    }
-
-    private func beginKeyPress() {
-        guard !keyIsDown else { return }
-        keyIsDown = true
-        keyHoldCommitted = false
-        keyHoldTimer?.invalidate()
-        keyHoldTimer = Timer.scheduledTimer(withTimeInterval: Self.holdThreshold, repeats: false) { [weak self] _ in
-            self?.commitKeyHold()
-        }
-    }
-
-    private func endKeyPress() {
-        guard keyIsDown else { return }
-        keyIsDown = false
-        keyHoldTimer?.invalidate()
-        keyHoldTimer = nil
-        if keyHoldCommitted {
-            keyHoldCommitted = false
-            onHoldEnd?()
-        } else {
-            onTap?()
-        }
-    }
-
-    private func commitKeyHold() {
-        guard keyIsDown else { return }
-        keyHoldCommitted = true
-        onHoldStart?()
     }
 }

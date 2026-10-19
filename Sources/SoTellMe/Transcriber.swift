@@ -1,25 +1,39 @@
 import WhisperKit
 import Foundation
 
-/// Wraps WhisperKit (local CoreML Whisper inference) and biases decoding
-/// toward common software-development and gaming vocabulary.
-final class Transcriber {
+/// Wraps WhisperKit (local CoreML Whisper inference).
+///
+/// No vocabulary prompt is given to the model: measured on the `small`
+/// model, a prompt of tech/gaming terms added ~1.6s to *every* decode
+/// (prompt tokens go through the decoder one by one) and made Whisper
+/// return the whole window as a single segment, which breaks live
+/// transcription (see AppDelegate). Jargon is fixed afterwards by
+/// `VocabCorrector` instead.
+///
+/// An actor so the live (in-progress) pass and the final pass never run
+/// inference on the same WhisperKit instance concurrently: a final pass
+/// requested while a live tick is still decoding simply waits for it.
+actor Transcriber {
     private var whisperKit: WhisperKit?
 
-    private static let vocabHint = """
-    Vocabulaire technique : Docker, Kubernetes, npm, GitHub, GitLab, API, framework, backend, \
-    frontend, Python, JavaScript, TypeScript, Swift, Xcode, VS Code, commit, merge, pull request, \
-    webhook, WebSocket, JSON, YAML, SQL, NoSQL, OAuth, JWT, CPU, GPU, RAM, SSD, SSH, URL, UI, UX. \
-    Vocabulaire gaming : framerate, FPS, spawn, respawn, nerf, buff, matchmaking, ping, lag, loot, \
-    cooldown, aggro, battle royale, speedrun, clutch, teamfight, gank, smurf, tryhard, noob, DPS, \
-    PvP, PvE, AFK, GG.
-    """
+    /// Above this gzip compression ratio a segment is a repetition loop
+    /// ("j-m-m-m-m-m…"), Whisper's usual failure mode on audio cut
+    /// mid-word. Same threshold as WhisperKit's own fallback heuristic.
+    private static let repetitionCompressionRatio: Float = 2.4
 
     func loadModel(named modelName: String = "small") async throws {
         whisperKit = try await WhisperKit(model: modelName)
     }
 
-    func transcribe(samples: [Float]) async throws -> String {
+    /// A decoded stretch of speech; `end` is in seconds from the start of
+    /// the audio passed to `transcribe`.
+    struct Segment {
+        let text: String
+        let end: Float
+        let isRepetitionLoop: Bool
+    }
+
+    func transcribe(samples: [Float]) async throws -> [Segment] {
         guard let whisperKit = whisperKit else {
             throw TranscriberError.modelNotLoaded
         }
@@ -32,25 +46,26 @@ final class Transcriber {
             // temperature whenever its quality heuristics flag the greedy
             // output as suspect. For short, near-field dictation this mostly
             // triggers false positives — it multiplies decode cost (this runs
-            // on every 1.2s live tick, not just the final pass) and the
+            // on every live tick, not just the final pass) and the
             // higher-temperature retries sample more randomly, which can
             // introduce word errors rather than fix them. Disabling it keeps
             // a single deterministic greedy pass.
             temperatureFallbackCount: 0,
             usePrefillPrompt: true,
-            // The app only ever reads `.text`; timestamp tokens are pure
-            // unneeded decode overhead here.
-            withoutTimestamps: true,
-            promptTokens: promptTokens(using: whisperKit)
+            skipSpecialTokens: true,
+            // Timestamps give segment boundaries, which live transcription
+            // uses to lock in finished sentences (see AppDelegate).
+            withoutTimestamps: false
         )
 
         let results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: options)
-        return results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func promptTokens(using whisperKit: WhisperKit) -> [Int]? {
-        guard let tokenizer = whisperKit.tokenizer else { return nil }
-        return tokenizer.encode(text: Self.vocabHint)
+        return results.flatMap(\.segments).map {
+            Segment(
+                text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                end: $0.end,
+                isRepetitionLoop: $0.compressionRatio > Self.repetitionCompressionRatio
+            )
+        }
     }
 }
 

@@ -81,8 +81,26 @@ struct HotkeyBinding: Codable, Equatable {
             123: "←", 124: "→", 125: "↓", 126: "↑",
             122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6",
             98: "F7", 100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
+            105: "F13", 107: "F14", 113: "F15", 106: "F16", 64: "F17",
+            79: "F18", 80: "F19", 90: "F20",
         ]
         return map[keyCode] ?? "Touche \(keyCode)"
+    }
+
+    private static let functionKeyCodes: Set<UInt16> = [
+        122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111,
+        105, 107, 113, 106, 64, 79, 80, 90,
+    ]
+
+    /// Global monitors only observe keys, they can't swallow them: the bound
+    /// key still reaches the focused app. A bare letter, digit, Space,
+    /// Return, Delete… would therefore also be typed (or act) there on every
+    /// dictation, so a key without modifiers is only accepted if it's a
+    /// function key (F1–F20).
+    var problem: String? {
+        guard let keyCode, modifierKeyCodes.isEmpty else { return nil }
+        if Self.functionKeyCodes.contains(keyCode) { return nil }
+        return "« \(displayString) » seule serait aussi tapée dans l'app active. Ajoute une touche de modification (⌘, ⌥, ⌃, ⇧) ou choisis une touche F1–F20."
     }
 }
 

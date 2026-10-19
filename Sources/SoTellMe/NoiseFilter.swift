@@ -13,6 +13,8 @@ enum NoiseFilter {
     private static let parenthesizedAnnotation = try! NSRegularExpression(
         pattern: #"\([^()]{0,120}\)"#
     )
+    /// Leftover Whisper control tokens such as "<|endoftext|>".
+    private static let specialTokens = try! NSRegularExpression(pattern: #"<\|[^|>]{0,40}\|>"#)
     private static let musicNotes = try! NSRegularExpression(pattern: "[♪🎵🎶]+")
     private static let extraWhitespace = try! NSRegularExpression(pattern: #"\s{2,}"#)
 
@@ -34,6 +36,7 @@ enum NoiseFilter {
         var result = text
         result = replaceAll(bracketedAnnotation, in: result, with: "")
         result = replaceAll(parenthesizedAnnotation, in: result, with: "")
+        result = replaceAll(specialTokens, in: result, with: "")
         result = replaceAll(musicNotes, in: result, with: "")
 
         for phrase in hallucinatedPhrases {

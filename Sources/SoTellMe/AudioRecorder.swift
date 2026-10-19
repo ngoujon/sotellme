@@ -4,7 +4,11 @@ import AudioToolbox
 /// Captures microphone audio and downsamples it to 16kHz mono Float32,
 /// the format expected by Whisper.
 final class AudioRecorder {
-    private let engine = AVAudioEngine()
+    /// Re-created on every `start()`: a long-lived engine keeps the input
+    /// format of whatever device was current when it was first used, so
+    /// switching microphones (or plugging in a headset) between dictations
+    /// would otherwise break capture.
+    private var engine: AVAudioEngine?
     private let samplesLock = NSLock()
     private var samples: [Float] = []
     private let targetFormat = AVAudioFormat(
@@ -23,9 +27,17 @@ final class AudioRecorder {
         samplesLock.lock()
         samples.removeAll()
         samplesLock.unlock()
+        stopEngine()
+
+        let engine = AVAudioEngine()
         let input = engine.inputNode
         applyPreferredDeviceIfNeeded(to: input)
         let inputFormat = input.outputFormat(forBus: 0)
+        // A 0 Hz / 0-channel format means there's no usable input device;
+        // installing a tap with it raises an Objective-C exception (crash).
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw AudioRecorderError.noInputDevice
+        }
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw AudioRecorderError.converterCreationFailed
         }
@@ -34,7 +46,22 @@ final class AudioRecorder {
             self?.process(buffer: buffer, converter: converter)
         }
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            // Leaving the tap installed would make the next `installTap`
+            // crash ("required condition is false: nullptr == Tap()").
+            input.removeTap(onBus: 0)
+            throw error
+        }
+        self.engine = engine
+    }
+
+    private func stopEngine() {
+        guard let engine else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        self.engine = nil
     }
 
     private func process(buffer: AVAudioPCMBuffer, converter: AVAudioConverter) {
@@ -79,8 +106,7 @@ final class AudioRecorder {
     }
 
     func stop() -> [Float] {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        stopEngine()
         samplesLock.lock()
         defer { samplesLock.unlock() }
         return samples
@@ -108,5 +134,6 @@ final class AudioRecorder {
 }
 
 enum AudioRecorderError: Error {
+    case noInputDevice
     case converterCreationFailed
 }

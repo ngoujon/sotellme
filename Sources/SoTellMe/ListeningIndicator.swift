@@ -9,15 +9,35 @@ final class ListeningIndicator {
     private var statusLabel: NSTextField?
     private var transcriptLabel: NSTextField?
     private var waveform: WaveformView?
+    /// Bumped on every show/hide so a pending auto-hide from an earlier
+    /// `showMessage` can't close a HUD shown since.
+    private var generation = 0
 
     func show(state: String) {
+        generation += 1
         if panel == nil {
             buildPanel()
         }
+        dotView?.layer?.backgroundColor = NSColor.systemRed.cgColor
+        waveform?.isHidden = false
         updateState(state)
         updateTranscript("")
         waveform?.reset()
         panel?.orderFrontRegardless()
+    }
+
+    /// Briefly shows an informational message (e.g. why dictation couldn't
+    /// start), then hides itself.
+    func showMessage(_ title: String, detail: String, duration: TimeInterval = 3) {
+        show(state: title)
+        dotView?.layer?.backgroundColor = NSColor.systemOrange.cgColor
+        waveform?.isHidden = true
+        updateTranscript(detail)
+        let shownGeneration = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            guard let self, self.generation == shownGeneration else { return }
+            self.hide()
+        }
     }
 
     private func buildPanel() {
@@ -112,6 +132,7 @@ final class ListeningIndicator {
     }
 
     func hide() {
+        generation += 1
         panel?.orderOut(nil)
         panel = nil
         dotView = nil

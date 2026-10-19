@@ -1,7 +1,7 @@
 import Foundation
 
 /// Post-processing pass that fixes common mis-transcriptions of tech/gaming
-/// jargon that the model prompt-biasing alone doesn't always catch.
+/// jargon (the model itself isn't given a vocabulary prompt, see Transcriber).
 final class VocabCorrector {
     private let corrections: [(NSRegularExpression, String)]
 
