@@ -45,7 +45,7 @@ final class HotkeySettingsWindowController: NSObject, NSWindowDelegate {
         info.font = .systemFont(ofSize: 11)
         info.textColor = .secondaryLabelColor
 
-        let usage = NSTextField(wrappingLabelWithString: "Appuie une fois pour démarrer la dictée, une seconde fois pour l'arrêter. Le texte s'écrit en temps réel pendant que tu parles.")
+        let usage = NSTextField(wrappingLabelWithString: "Maintiens le raccourci enfoncé pendant que tu parles, relâche-le pour arrêter la dictée. Le texte s'écrit en temps réel pendant que tu parles.")
         usage.frame = NSRect(x: 20, y: 140, width: 360, height: 32)
         usage.font = .systemFont(ofSize: 11)
         usage.textColor = .secondaryLabelColor

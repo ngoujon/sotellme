@@ -6,8 +6,8 @@ import AppKit
 /// "Raccourci de dictée…" settings window and does nothing until one is
 /// configured.
 ///
-/// Each press fires `onPress` immediately (one press starts dictation, the
-/// next one stops it); releasing the key does nothing.
+/// Push-to-talk: pressing the shortcut fires `onPress` (dictation starts),
+/// releasing it fires `onRelease` (dictation stops).
 ///
 /// For modifier-only bindings (e.g. ⌃⌥), pressing any regular key while the
 /// modifiers are still held means the user is typing an ordinary shortcut
@@ -18,6 +18,7 @@ import AppKit
 /// transcribed text — so no extra permission prompt is needed for this.
 final class HotkeyManager {
     var onPress: (() -> Void)?
+    var onRelease: (() -> Void)?
     var onCancel: (() -> Void)?
 
     /// The keyboard shortcut that drives dictation. `nil` disables the
@@ -30,7 +31,7 @@ final class HotkeyManager {
     /// records a new shortcut, so pressing the current one there doesn't
     /// also start a dictation.
     var isSuspended = false {
-        didSet { if isSuspended { modifiersActive = false } }
+        didSet { if isSuspended { isHeld = false } }
     }
 
     private var isRegistered = false
@@ -38,9 +39,9 @@ final class HotkeyManager {
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
 
-    /// For modifier-only bindings: whether the required modifiers are
-    /// currently held (the press already fired).
-    private var modifiersActive = false
+    /// Whether the shortcut is currently held (the press already fired and
+    /// the release hasn't yet).
+    private var isHeld = false
 
     func register() {
         isRegistered = true
@@ -65,14 +66,14 @@ final class HotkeyManager {
         }
         globalKeyMonitor = nil
         localKeyMonitor = nil
-        modifiersActive = false
+        isHeld = false
     }
 
     private func installKeyboardMonitorsIfNeeded() {
         removeMonitors()
         guard isRegistered, keyboardBinding != nil else { return }
 
-        let mask: NSEvent.EventTypeMask = [.keyDown, .flagsChanged]
+        let mask: NSEvent.EventTypeMask = [.keyDown, .keyUp, .flagsChanged]
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             self?.handleKeyEvent(event)
         }
@@ -87,26 +88,36 @@ final class HotkeyManager {
         let activeModifiers = HotkeyBinding.activeModifierKeyCodes(from: event)
 
         if let keyCode = binding.keyCode {
-            guard event.type == .keyDown, !event.isARepeat,
-                  event.keyCode == keyCode, activeModifiers == binding.modifierKeyCodes else { return }
-            onPress?()
-        } else {
-            // Modifier-only binding: fires once when exactly the required
-            // physical modifier keys become held; re-arms once released.
+            // The release is the key itself going up, whatever modifiers
+            // were let go of first.
+            guard event.type != .flagsChanged, event.keyCode == keyCode else { return }
             if event.type == .keyDown {
-                if modifiersActive {
-                    modifiersActive = false
+                guard !event.isARepeat, !isHeld, activeModifiers == binding.modifierKeyCodes else { return }
+                isHeld = true
+                onPress?()
+            } else if event.type == .keyUp, isHeld {
+                isHeld = false
+                onRelease?()
+            }
+        } else {
+            // Modifier-only binding: pressed once exactly the required
+            // physical modifier keys are held, released as soon as they no
+            // longer are.
+            if event.type == .keyDown {
+                if isHeld {
+                    isHeld = false
                     onCancel?()
                 }
                 return
             }
             guard event.type == .flagsChanged else { return }
             let isActive = !binding.modifierKeyCodes.isEmpty && activeModifiers == binding.modifierKeyCodes
-            if isActive, !modifiersActive {
-                modifiersActive = true
+            if isActive, !isHeld {
+                isHeld = true
                 onPress?()
-            } else if !isActive {
-                modifiersActive = false
+            } else if !isActive, isHeld {
+                isHeld = false
+                onRelease?()
             }
         }
     }

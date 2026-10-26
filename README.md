@@ -12,10 +12,10 @@ A macOS app (Dock + menu bar) to dictate text anywhere with a keyboard shortcut,
 
 ## How it works
 
-- Press your dictation shortcut once to start listening, press it again to stop.
-- A small HUD appears at the bottom of the screen with a live waveform, a preview of the transcript and a reminder of how to stop.
+- Push-to-talk: hold your dictation shortcut while you speak, release it to stop.
+- While the shortcut is held, a small HUD appears at the bottom of the screen with a live waveform and a preview of the transcript; it disappears as soon as you release.
 - Text is **typed in real time** into the focused app while you speak. Transcription streams continuously: finished sentences are locked in and never re-decoded, only the sentence in progress is refined, so it stays fast however long you talk. If you switch apps mid-dictation, typing stops and the final text is copied to the clipboard instead.
-- When you stop, only the last fraction of a second is decoded once more (skipped if you were silent).
+- When you release, only the last fraction of a second is decoded once more in the background (skipped if you were silent).
 - Everything runs locally with [WhisperKit](https://github.com/argmaxinc/WhisperKit) (Whisper on CoreML, accelerated by the Neural Engine on Apple Silicon).
 
 The shortcut is configured from the menu-bar icon → **Raccourci de dictée…** (the window opens by itself on first launch): a key with modifiers (e.g. ⌘⇧D), a function key (F1–F20), or modifier keys held together (e.g. ⌃⌥). Left and right modifiers are distinguished. A bare letter/digit isn't accepted since it would also be typed in the active app. With a modifier-only shortcut, using it as part of a regular shortcut (e.g. ⌃⌥T) cancels the dictation.

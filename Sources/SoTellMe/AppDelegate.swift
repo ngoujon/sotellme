@@ -48,9 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// dictation can never be typed into the current one.
     private var session = 0
 
-    /// Whether the latest shortcut press is the one that started the
-    /// recording (so a modifier-only shortcut can still take it back, see
-    /// `handleShortcutCancel`), as opposed to one that stopped a dictation.
+    /// Whether the shortcut currently held is the one that started the
+    /// recording, so releasing it stops the dictation (and a modifier-only
+    /// shortcut can still take it back, see `handleShortcutCancel`).
     private var currentPressStartedRecording = false
 
     /// Below this peak amplitude, audio is treated as silence: Whisper is
@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         hotkeyManager.onPress = { [weak self] in self?.handleShortcutPress() }
+        hotkeyManager.onRelease = { [weak self] in self?.handleShortcutRelease() }
         hotkeyManager.onCancel = { [weak self] in self?.handleShortcutCancel() }
         hotkeyManager.register()
         hotkeyManager.keyboardBinding = HotkeyBindingStore.load()
@@ -456,12 +457,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Shortcut
 
-    /// One press starts dictation, the next one stops it.
+    /// Push-to-talk: dictation runs while the shortcut is held. A press
+    /// during a dictation started from the menu just stops it.
     private func handleShortcutPress() {
         currentPressStartedRecording = false
         switch state {
         case .idle:
-            currentPressStartedRecording = startRecording()
+            currentPressStartedRecording = startRecording(pushToTalk: true)
         case .listening:
             stopRecordingAndTranscribe()
         case .loadingModel:
@@ -471,6 +473,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .transcribing:
             break
         }
+    }
+
+    private func handleShortcutRelease() {
+        guard currentPressStartedRecording else { return }
+        currentPressStartedRecording = false
+        stopRecordingAndTranscribe()
     }
 
     /// A modifier-only shortcut turned out to be part of an ordinary
@@ -490,7 +498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Returns whether recording actually started.
     @discardableResult
-    private func startRecording() -> Bool {
+    private func startRecording(pushToTalk: Bool = false) -> Bool {
         guard state == .idle else { return false }
         if Self.microphoneDenied {
             indicator.showMessage("Accès au micro refusé", detail: "Autorise SoTellMe dans Réglages › Confidentialité › Micro.")
@@ -515,7 +523,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         committedText = ""
         committedSampleCount = 0
         lastLiveSampleCount = 0
-        let stopHint = hotkeyManager.keyboardBinding.map { "Écoute… — \($0.displayString) pour terminer" } ?? "Écoute…"
+        let stopHint: String
+        if pushToTalk, let binding = hotkeyManager.keyboardBinding {
+            stopHint = "Écoute… — relâche \(binding.displayString) pour terminer"
+        } else {
+            stopHint = "Écoute…"
+        }
         indicator.show(state: stopHint)
         NSSound(named: "Tink")?.play()
         startLiveTranscription()
@@ -619,15 +632,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// (the last live tick can be a fraction of a second stale, so the very
     /// last words may not have been through a live pass yet). If the audio
     /// since that last tick is silent, the live text is already final and
-    /// the pass is skipped entirely.
+    /// the pass is skipped entirely. The indicator goes away right away: the
+    /// final pass just finishes typing in the background.
     private func stopRecordingAndTranscribe() {
         guard state == .listening else { return }
         stopLiveTranscription()
         NSSound(named: "Pop")?.play()
+        indicator.hide()
         let samples = audioRecorder.stop()
 
         guard Self.peakAmplitude(samples) > Self.silencePeakThreshold else {
-            indicator.showMessage("Aucune voix détectée", detail: "Vérifie le micro sélectionné dans le menu SoTellMe.", duration: 2)
             state = .idle
             return
         }
@@ -636,7 +650,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let hasNewSpeech = Self.peakAmplitude(tail) > Self.silencePeakThreshold
         if lastLiveSampleCount == 0 || hasNewSpeech {
             state = .transcribing
-            indicator.updateLevel(0)
             runFinalTranscription(samples: Array(samples[min(committedSampleCount, samples.count)...]))
         } else {
             finishDictation()
@@ -644,7 +657,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func runFinalTranscription(samples: [Float]) {
-        indicator.updateState("Finalisation…")
         let finalSession = session
         Task {
             do {
