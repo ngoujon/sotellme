@@ -113,24 +113,6 @@ final class AudioRecorder {
         return samples
     }
 
-    /// Keeps the last dictation's audio next to the log
-    /// (~/Library/Logs/SoTellMe/last_dictation.wav), to check what the
-    /// microphone actually captured when a dictation types nothing.
-    func saveDebugCopy(_ samples: [Float]) {
-        let url = Log.fileURL.deletingLastPathComponent().appendingPathComponent("last_dictation.wav")
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: AVAudioFrameCount(samples.count)),
-              let channel = buffer.floatChannelData?[0] else { return }
-        buffer.frameLength = AVAudioFrameCount(samples.count)
-        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
-        do {
-            try? FileManager.default.removeItem(at: url)
-            let file = try AVAudioFile(forWriting: url, settings: targetFormat.settings)
-            try file.write(from: buffer)
-        } catch {
-            Log.error("failed to save debug audio: \(error)")
-        }
-    }
-
     private func applyPreferredDeviceIfNeeded(to input: AVAudioInputNode) {
         guard let uid = preferredDeviceUID, let deviceID = MicrophoneManager.deviceID(forUID: uid) else { return }
         guard let audioUnit = input.audioUnit else {
