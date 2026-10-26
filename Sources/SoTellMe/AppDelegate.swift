@@ -129,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Task {
             do {
                 try await transcriber.loadModel()
+                Log.info("Whisper model loaded")
                 state = .idle
             } catch {
                 Log.error("failed to load Whisper model: \(error)")
@@ -572,6 +573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             do {
                 let segments = try await transcriber.transcribe(samples: window)
+                Log.info("live pass: \(window.count) samples, \(segments.count) segment(s): \(segments.map(\.text))")
                 guard tickSession == session, state == .listening else { return }
                 // A repetition loop is usually just this tick's window
                 // ending mid-word; the next tick won't have it, so skip
@@ -624,6 +626,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stopLiveTranscription()
         NSSound(named: "Pop")?.play()
         let samples = audioRecorder.stop()
+        Log.info("dictation stopped: \(samples.count) samples, peak \(Self.peakAmplitude(samples)), live text: \(sessionTranscript.count) chars")
+        audioRecorder.saveDebugCopy(samples)
 
         guard Self.peakAmplitude(samples) > Self.silencePeakThreshold else {
             indicator.showMessage("Aucune voix détectée", detail: "Vérifie le micro sélectionné dans le menu SoTellMe.", duration: 2)
@@ -648,6 +652,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Task {
             do {
                 let segments = try await transcriber.transcribe(samples: samples)
+                Log.info("final pass: \(samples.count) samples, \(segments.count) segment(s): \(segments.map(\.text))")
                 guard finalSession == session else { return }
                 showLive(Self.joined(committedText, clean(segments.filter { !$0.isRepetitionLoop })))
             } catch {

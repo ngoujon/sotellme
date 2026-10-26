@@ -22,7 +22,30 @@ actor Transcriber {
     private static let repetitionCompressionRatio: Float = 2.4
 
     func loadModel(named modelName: String = "small") async throws {
-        whisperKit = try await WhisperKit(model: modelName)
+        // Load straight from the local copy when it exists: otherwise
+        // WhisperKit queries Hugging Face on every launch to resolve the
+        // model folder, even though the files are already on disk.
+        if let folder = Self.localModelFolder(named: modelName) {
+            whisperKit = try await WhisperKit(modelFolder: folder.path)
+        } else {
+            whisperKit = try await WhisperKit(model: modelName)
+        }
+    }
+
+    /// Where WhisperKit's first-launch download puts the model (HubApi's
+    /// default base, ~/Documents/huggingface). Nil if not downloaded yet.
+    private static func localModelFolder(named modelName: String) -> URL? {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let folder = documents
+            .appendingPathComponent("huggingface/models/argmaxinc/whisperkit-coreml")
+            .appendingPathComponent("openai_whisper-\(modelName)")
+        let required = ["AudioEncoder.mlmodelc", "TextDecoder.mlmodelc", "MelSpectrogram.mlmodelc"]
+        let complete = required.allSatisfy {
+            FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
+        }
+        return complete ? folder : nil
     }
 
     /// A decoded stretch of speech; `end` is in seconds from the start of
