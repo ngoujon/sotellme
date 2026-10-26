@@ -485,6 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// keyboard shortcut (e.g. ⌃⌥T): drop the dictation it just started.
     private func handleShortcutCancel() {
         guard currentPressStartedRecording, state == .listening else { return }
+        Log.info("dictation cancelled: a key was typed while the shortcut was held")
         currentPressStartedRecording = false
         session += 1
         stopLiveTranscription()

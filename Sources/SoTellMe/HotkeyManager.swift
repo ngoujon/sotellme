@@ -84,7 +84,7 @@ final class HotkeyManager {
     }
 
     private func handleKeyEvent(_ event: NSEvent) {
-        guard !isSuspended, let binding = keyboardBinding else { return }
+        guard !isSuspended, let binding = keyboardBinding, !TextInserter.isSynthetic(event) else { return }
         let activeModifiers = HotkeyBinding.activeModifierKeyCodes(from: event)
 
         if let keyCode = binding.keyCode {

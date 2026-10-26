@@ -96,9 +96,22 @@ final class TextInserter {
     /// e.g. ⌘⇧D or ⌃⌥) while text is typed. Without this, the synthetic
     /// events inherit those modifiers and turn into shortcuts (⌘ + typed
     /// letters) in the focused app.
+    ///
+    /// The events are also tagged so `HotkeyManager` can ignore them: with a
+    /// modifier-only shortcut, any key typed while it's held means "regular
+    /// shortcut, cancel the dictation" — which our own typing must not trigger.
     private static func clearModifiers(_ events: CGEvent?...) {
         for event in events {
             event?.flags = []
+            event?.setIntegerValueField(.eventSourceUserData, value: syntheticEventTag)
         }
+    }
+
+    static let syntheticEventTag: Int64 = 0x534F_5445_4C4C // "SOTELL"
+
+    static func isSynthetic(_ event: NSEvent) -> Bool {
+        guard let cgEvent = event.cgEvent else { return false }
+        return cgEvent.getIntegerValueField(.eventSourceUserData) == syntheticEventTag
+            || cgEvent.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid())
     }
 }
